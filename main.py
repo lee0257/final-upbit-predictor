@@ -52,13 +52,17 @@ async def send_telegram_alert(symbol, price, reason):
         })
 
 async def save_to_supabase(table, data):
-    try:
-        url = f"{SUPABASE_URL}/rest/v1/{table}"
-        res = requests.post(url, headers=HEADERS, json=[data])
-        if res.status_code >= 300:
-            print(f"[ERROR] Failed to insert into {table}: {res.text}")
-    except Exception as e:
-        print(f"[ERROR] Supabase exception in {table}: {e}")
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    for _ in range(3):
+        try:
+            res = requests.post(url, headers=HEADERS, json=[data], timeout=3)
+            if res.status_code < 300:
+                return
+            else:
+                print(f"[ERROR] Supabase write error: {res.status_code} - {res.text}")
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] Supabase connection retrying in {table}: {e}")
+            await asyncio.sleep(2)
 
 async def handle_message(message):
     try:
