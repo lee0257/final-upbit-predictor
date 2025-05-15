@@ -74,7 +74,6 @@ async def handle_message(message):
                 "timestamp": now.isoformat()
             })
 
-            # 체결량 10초 증가율 감지
             if code not in recent_volume:
                 recent_volume[code] = []
             recent_volume[code].append((now, vol))
