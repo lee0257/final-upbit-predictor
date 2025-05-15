@@ -8,7 +8,7 @@ import time
 SUPABASE_URL = "https://sjmdhxnvqnudjgqabsgd.supabase.co"
 SUPABASE_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqbWRoeG52cW51ZGpncXFic2dkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDcyODA2MTQsImV4cCI6MjA2Mjg1NjYxNH0.f8dqoeYLlAg96oImoc9rUa4gVZR9qvWdDBZdhrHZC64"
 TELEGRAM_TOKEN = "6385123522:AAG0qdyaPOv-Q_7d9Y3A3POyTSZKlvx9XZs"
-TELEGRAM_IDS = [1901931119, 5790931119]  # 사용자 + 친구 ID 포함
+TELEGRAM_IDS = [1901931119, 5790931119]
 
 HEADERS = {
     "apikey": SUPABASE_API_KEY,
@@ -16,7 +16,8 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-last_sent = {}  # 중복 전송 방지
+last_sent = {}
+recent_volume = {}
 
 async def fetch_all_krw_symbols():
     url = "https://api.upbit.com/v1/market/all"
@@ -28,11 +29,12 @@ async def send_telegram_alert(symbol, price, reason):
     now = datetime.utcnow()
     if symbol in last_sent and now - last_sent[symbol] < timedelta(minutes=30):
         return
-
     last_sent[symbol] = now
+
     buy_min = int(price * 0.995)
     buy_max = int(price * 1.005)
     target = int(price * 1.03)
+
     msg = f"""
 [급등포착]
 - 코인명: {symbol}
@@ -58,22 +60,39 @@ async def save_to_supabase(table, data):
 async def handle_message(message):
     try:
         data = json.loads(message)
+        code = data['cd']
+        price = int(data['tp'])
+        vol = float(data['tv'])
+        side = data.get('ab', '')
+        now = datetime.utcnow()
+
         if data['ty'] == 'ticker':
             await save_to_supabase("realtime_quotes", {
-                "code": data['cd'],
-                "price": data['tp'],
-                "volume": data['tv'],
-                "timestamp": datetime.utcnow().isoformat()
+                "code": code,
+                "price": price,
+                "volume": vol,
+                "timestamp": now.isoformat()
             })
-            if data['tv'] > 3e8:  # 3억 이상 체결량 급증 감지
-                await send_telegram_alert(data['cd'], int(data['tp']), "체결량 급증 + 매수세 유입")
+
+            # 체결량 10초 증가율 감지
+            if code not in recent_volume:
+                recent_volume[code] = []
+            recent_volume[code].append((now, vol))
+            recent_volume[code] = [(t, v) for (t, v) in recent_volume[code] if (now - t).seconds <= 20]
+
+            vol_10s = sum(v for (t, v) in recent_volume[code] if (now - t).seconds <= 10)
+            vol_prev = sum(v for (t, v) in recent_volume[code] if 10 < (now - t).seconds <= 20)
+
+            if vol_prev > 0 and vol_10s / vol_prev > 5 and vol_10s > 3e8:
+                await send_telegram_alert(code, price, "10초 체결량 5배 급증 + 매수세 유입")
+
         elif data['ty'] == 'trade':
             await save_to_supabase("realtime_ticks", {
-                "code": data['cd'],
-                "price": data['tp'],
-                "volume": data['tv'],
-                "side": data['ab'],
-                "timestamp": datetime.utcnow().isoformat()
+                "code": code,
+                "price": price,
+                "volume": vol,
+                "side": side,
+                "timestamp": now.isoformat()
             })
     except Exception as e:
         print(f"[ERROR] handle_message failed: {e}")
