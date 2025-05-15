@@ -52,10 +52,13 @@ async def send_telegram_alert(symbol, price, reason):
         })
 
 async def save_to_supabase(table, data):
-    url = f"{SUPABASE_URL}/rest/v1/{table}"
-    res = requests.post(url, headers=HEADERS, json=[data])
-    if res.status_code >= 300:
-        print(f"[ERROR] Failed to insert into {table}: {res.text}")
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/{table}"
+        res = requests.post(url, headers=HEADERS, json=[data])
+        if res.status_code >= 300:
+            print(f"[ERROR] Failed to insert into {table}: {res.text}")
+    except Exception as e:
+        print(f"[ERROR] Supabase exception in {table}: {e}")
 
 async def handle_message(message):
     try:
@@ -97,23 +100,29 @@ async def handle_message(message):
         print(f"[ERROR] handle_message failed: {e}")
 
 async def main():
-    uri = "wss://api.upbit.com/websocket/v1"
-    codes = await fetch_all_krw_symbols()
+    while True:
+        try:
+            uri = "wss://api.upbit.com/websocket/v1"
+            codes = await fetch_all_krw_symbols()
 
-    subscribe_data = [
-        {"ticket": "realtime-krw-all"},
-        {"type": "ticker", "codes": codes},
-        {"type": "trade", "codes": codes},
-        {"format": "SIMPLE"}
-    ]
+            subscribe_data = [
+                {"ticket": "realtime-krw-all"},
+                {"type": "ticker", "codes": codes},
+                {"type": "trade", "codes": codes},
+                {"format": "SIMPLE"}
+            ]
 
-    async with websockets.connect(uri) as websocket:
-        await websocket.send(json.dumps(subscribe_data))
-        print("[INFO] WebSocket connected and subscribed to all KRW markets.")
+            async with websockets.connect(uri) as websocket:
+                await websocket.send(json.dumps(subscribe_data))
+                print("[INFO] WebSocket connected and subscribed to all KRW markets.")
 
-        while True:
-            message = await websocket.recv()
-            await handle_message(message)
+                while True:
+                    message = await websocket.recv()
+                    await handle_message(message)
+
+        except Exception as e:
+            print(f"[ERROR] main loop crashed, retrying: {e}")
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(main())
